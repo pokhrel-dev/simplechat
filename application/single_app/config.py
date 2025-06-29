@@ -24,6 +24,7 @@ import ffmpeg_binaries as ffmpeg_bin
 ffmpeg_bin.init()
 import ffmpeg as ffmpeg_py
 import glob
+import jwt
 
 from flask import (
     Flask, 
@@ -86,7 +87,7 @@ executor.init_app(app)
 
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['VERSION'] = '0.214.001'
+app.config['VERSION'] = '0.215.034'
 Session(app)
 
 CLIENTS = {}
@@ -100,26 +101,48 @@ ALLOWED_EXTENSIONS = {
 ALLOWED_EXTENSIONS_IMG = {'png', 'jpg', 'jpeg'}
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100 MB
 
+# Add Support for Custom Azure Environments
+CUSTOM_GRAPH_URL_VALUE = os.getenv("CUSTOM_GRAPH_URL_VALUE", "")
+CUSTOM_IDENTITY_URL_VALUE = os.getenv("CUSTOM_IDENTITY_URL_VALUE", "")
+CUSTOM_RESOURCE_MANAGER_URL_VALUE = os.getenv("CUSTOM_RESOURCE_MANAGER_URL_VALUE", "")
+CUSTOM_BLOB_STORAGE_URL_VALUE = os.getenv("CUSTOM_BLOB_STORAGE_URL_VALUE", "")
+CUSTOM_COGNITIVE_SERVICES_URL_VALUE = os.getenv("CUSTOM_COGNITIVE_SERVICES_URL_VALUE", "")
+
 # Azure AD Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 APP_URI = f"api://{CLIENT_ID}"
 CLIENT_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
-AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 SCOPE = ["User.Read", "User.ReadBasic.All", "People.Read.All", "Group.Read.All"] # Adjust scope according to your needs
 MICROSOFT_PROVIDER_AUTHENTICATION_SECRET = os.getenv("MICROSOFT_PROVIDER_AUTHENTICATION_SECRET")    
-AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment
+
+OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
+AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
+
+if AZURE_ENVIRONMENT == "custom":
+    AUTHORITY = f"{CUSTOM_IDENTITY_URL_VALUE}/{TENANT_ID}"
+else:
+    AUTHORITY = f"https://login.microsoftonline.us/{TENANT_ID}"
 
 WORD_CHUNK_SIZE = 400
 
 if AZURE_ENVIRONMENT == "usgovernment":
+    OIDC_METADATA_URL = f"https://login.microsoftonline.us/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.usgovcloudapi.net"
     authority = AzureAuthorityHosts.AZURE_GOVERNMENT
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.us/.default"
+elif AZURE_ENVIRONMENT == "custom":
+    resource_manager = CUSTOM_RESOURCE_MANAGER_URL_VALUE
+    authority = CUSTOM_IDENTITY_URL_VALUE
+    credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = CUSTOM_COGNITIVE_SERVICES_URL_VALUE  
 else:
+    OIDC_METADATA_URL = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration"
     resource_manager = "https://management.azure.com"
     authority = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
     credential_scopes=[resource_manager + "/.default"]
+    cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
 
 bing_search_endpoint = "https://api.bing.microsoft.com/"
 
@@ -261,6 +284,40 @@ def ensure_custom_logo_file_exists(app, settings):
         print(f"Failed to write/overwrite {logo_filename}: {ex}")
     except Exception as ex: # Catch any other unexpected errors
          print(f"Unexpected error during logo file write for {logo_filename}: {ex}")
+
+def ensure_custom_favicon_file_exists(app, settings):
+    """
+    If custom_favicon_base64 is present in settings, ensure static/images/favicon.ico
+    exists and reflects the current base64 data. Overwrites if necessary.
+    If base64 is empty/missing, uses the default favicon.
+    """
+    custom_favicon_b64 = settings.get('custom_favicon_base64', '')
+    # Ensure the filename is consistent
+    favicon_filename = 'favicon.ico'
+    favicon_path = os.path.join(app.root_path, 'static', 'images', favicon_filename)
+    images_dir = os.path.dirname(favicon_path)
+
+    # Ensure the directory exists
+    os.makedirs(images_dir, exist_ok=True)
+
+    if not custom_favicon_b64:
+        # No custom favicon in DB; no need to remove the static file as we want to keep the default
+        return
+
+    # Custom favicon exists in settings, write/overwrite the file
+    try:
+        # Decode the current base64 string
+        decoded = base64.b64decode(custom_favicon_b64)
+
+        # Write the decoded data to the file, overwriting if it exists
+        with open(favicon_path, 'wb') as f:
+            f.write(decoded)
+        print(f"Ensured {favicon_filename} exists and matches current settings.")
+
+    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
+        print(f"Failed to write/overwrite {favicon_filename}: {ex}")
+    except Exception as ex: # Catch any other unexpected errors
+         print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
 
 def initialize_clients(settings):
     """

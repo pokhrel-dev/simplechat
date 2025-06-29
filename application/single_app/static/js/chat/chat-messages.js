@@ -15,6 +15,7 @@ import {
 } from "./chat-conversations.js";
 import { escapeHtml } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { saveUserSetting } from "./chat-layout.js";
 
 export const userInput = document.getElementById("user-input");
 const sendBtn = document.getElementById("send-btn");
@@ -457,16 +458,20 @@ export function actuallySendMessage(finalMessageToSend) {
   const docSel = document.getElementById("document-select");
   const classificationInput = document.getElementById("classification-select"); // Get the input
 
-  if (hybridSearchEnabled && docSel && classificationInput) {
+  // Always set selectedDocumentId if a document is selected, regardless of hybridSearchEnabled
+  if (docSel) {
     const selectedDocOption = docSel.options[docSel.selectedIndex];
     if (selectedDocOption && selectedDocOption.value !== "") {
       selectedDocumentId = selectedDocOption.value;
-      classificationsToSend =
-        classificationInput.value === "N/A" ? null : classificationInput.value;
     } else {
       selectedDocumentId = null;
-      classificationsToSend = classificationInput.value || null;
     }
+  }
+
+  // Only set classificationsToSend if classificationInput exists
+  if (classificationInput) {
+    classificationsToSend =
+      classificationInput.value === "N/A" ? null : classificationInput.value;
   }
 
   let bingSearchEnabled = false;
@@ -631,11 +636,20 @@ export function actuallySendMessage(finalMessageToSend) {
           error.data.message_id // Use message_id if provided in error
         );
       } else {
-        // General error message
-        appendMessage(
-          "Error",
-          `Could not get a response. ${error.message || ""}`
-        );
+        // Show specific embedding error if present, or if status is 500 (embedding backend error)
+        const errMsg = (error.message || "").toLowerCase();
+        if (errMsg.includes("embedding") || error.status === 500) {
+          appendMessage(
+            "Error",
+            "There was an issue with the embedding process. Please check with an admin on embedding configuration."
+          );
+        } else {
+          // General error message
+          appendMessage(
+            "Error",
+            `Could not get a response. ${error.message || ""}`
+          );
+        }
       }
     });
 }
@@ -702,5 +716,14 @@ if (userInput) {
       }
       // If Shift key IS pressed, do nothing - allow the default behavior (inserting a newline)
     }
+  });
+}
+
+// Save the selected model when it changes
+if (modelSelect) {
+  modelSelect.addEventListener("change", function() {
+    const selectedModel = modelSelect.value;
+    console.log(`Saving preferred model: ${selectedModel}`);
+    saveUserSetting({ 'preferredModelDeployment': selectedModel });
   });
 }

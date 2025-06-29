@@ -120,7 +120,7 @@ def register_route_backend_chats(app):
                     raise ValueError("No GPT model selected or configured.")
 
                 if auth_type == 'managed_identity':
-                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
                     gpt_client = AzureOpenAI(
                         api_version=api_version,
                         azure_endpoint=endpoint,
@@ -357,8 +357,11 @@ def register_route_backend_chats(app):
 
                 search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
             except Exception as e:
-                 print(f"Error during hybrid search: {e}")
-                 # Optionally inform the user or just proceed without search results
+                print(f"Error during hybrid search: {e}")
+                # Only treat as error if the exception is from embedding failure
+                return jsonify({
+                    'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
+                }), 500
 
             if search_results:
                 retrieved_texts = []
@@ -501,7 +504,7 @@ def register_route_backend_chats(app):
                 )
             else:
                 if (settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity'):
-                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+                    token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
                     image_gen_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_image_gen_api_version'),
                         azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
@@ -700,6 +703,31 @@ def register_route_backend_chats(app):
         except Exception as e:
             print(f"Error preparing conversation history: {e}")
             return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
+
+        # ---------------------------------------------------------------------
+        # [PATCH] Insert default system prompt if not present
+        # ---------------------------------------------------------------------
+        default_system_prompt = settings.get('default_system_prompt', '').strip()
+        # Only add if non-empty and not already present (excluding summary/augmentation system messages)
+        if default_system_prompt:
+            # Find if any system message (not summary or augmentation) is present
+            has_general_system_prompt = any(
+                msg.get('role') == 'system' and not (
+                    msg.get('content', '').startswith('<Summary of previous conversation context>') or
+                    "retrieved document excerpts" in msg.get('content', '') or
+                    "web search results" in msg.get('content', '')
+                )
+                for msg in conversation_history_for_api
+            )
+            if not has_general_system_prompt:
+                # Insert at the start, after any summary if present
+                insert_idx = 0
+                if conversation_history_for_api and conversation_history_for_api[0].get('role') == 'system' and conversation_history_for_api[0].get('content', '').startswith('<Summary of previous conversation context>'):
+                    insert_idx = 1
+                conversation_history_for_api.insert(insert_idx, {
+                    "role": "system",
+                    "content": default_system_prompt
+                })
 
         # ---------------------------------------------------------------------
         # 6) Final GPT Call

@@ -428,6 +428,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
+                    type="button" role="tab" aria-controls="scale" aria-selected="false">
+                    Scale
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces" type="button"
                     role="tab" aria-controls="workspaces" aria-selected="false">
                     Workspaces
@@ -479,9 +485,19 @@
                             {% if settings.show_logo %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="show_logo">Show Logo</label>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" class="form-check-input" id="hide_app_title" name="hide_app_title"
+                            {% if settings.hide_app_title %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
+                    </div>
                     <div class="form-group mb-3">
                         <label for="logo_file">Upload Custom Logo</label>
                         <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="favicon_file">Upload Custom Favicon</label>
+                        <input type="file" class="form-control" name="favicon_file" id="favicon_file" accept=".png,.jpg,.jpeg,.ico">
+                        <small class="form-text text-muted">Recommended: 16x16 or 32x32 pixel png or jpg or ico.</small>
                     </div>
                 </div>
 
@@ -490,6 +506,16 @@
                     <h5>Page Text (Markdown)</h5>
                     <p class="text-muted mb-1">You can either edit the text in a Markdown editor or switch to a preview mode.</p>
 
+                    <!-- Alignment Selector -->
+                    <div class="mb-3">
+                        <label for="landing_page_alignment" class="form-label">Markdown Alignment</label>
+                        <select class="form-select" id="landing_page_alignment" name="landing_page_alignment">
+                            <option value="left" {% if settings.landing_page_alignment == "left" or not settings.landing_page_alignment %}selected{% endif %}>Left</option>
+                            <option value="center" {% if settings.landing_page_alignment == "center" %}selected{% endif %}>Center</option>
+                            <option value="right" {% if settings.landing_page_alignment == "right" %}selected{% endif %}>Right</option>
+                        </select>
+                        <small class="form-text text-muted">Choose how the landing page markdown is aligned on the home page.</small>
+                    </div>
                     
                     <div class="form-check form-switch mb-3">
                         <input
@@ -853,7 +879,7 @@
             
             <div class="tab-pane fade" id="image-gen" role="tabpanel" aria-labelledby="image-gen-tab">
                 
-                 <p class="text-muted">
+                <p class="text-muted">
                     Configure image generation settings. Enable/disable, set endpoints, and choose a model.
                 </p>
 
@@ -1006,7 +1032,57 @@
                 <div id="test_image_result" class="mt-2"></div>
             </div>
 
-            
+
+            <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
+                <p class="text-muted">
+                    Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
+                </p>
+                <div class="card p-3 mb-3">
+                    <h5>Redis Cache</h5>
+                    <p class="text-muted">
+                        Enable Redis Cache to store session data in a distributed cache. This is recommended for production and multi-instance deployments.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_redis_cache"
+                            name="enable_redis_cache"
+                            {% if settings.enable_redis_cache %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_redis_cache">
+                            Enable Redis Cache
+                        </label>
+                    </div>
+                    <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
+                        <div class="mb-3">
+                            <label for="redis_url" class="form-label">Redis Server Host Name</label>
+                            <p class="text-muted">(example: simple-chat.redis.cache.windows.net)</p>
+                            <input type="text" class="form-control" id="redis_url" name="redis_url" value="{{ settings.redis_url or '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="redis_auth_type" class="form-label">Redis Authentication Type</label>
+                            <select class="form-select" id="redis_auth_type" name="redis_auth_type">
+                                <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
+                                <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                            </select>
+                        </div>
+                        <div class="mb-3" id="redis_key_container" {% if settings.redis_auth_type != 'key' and settings.redis_auth_type %}style="display: none;"{% endif %}>
+                            <label for="redis_key" class="form-label">Redis Access Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="redis_key" name="redis_key" value="{{ settings.redis_key or '' }}">
+                                <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary mt-3" id="test_redis_button">
+                            Test Redis Connection
+                        </button>
+                        <div id="test_redis_result" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+
+
             <div class="tab-pane fade" id="workspaces" role="tabpanel" aria-labelledby="workspaces-tab">
                 <p class="text-muted">
                     Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.
@@ -1071,7 +1147,7 @@
 
                 <div class="card mb-3 p-3">
                     
-                     <h5>Multimedia Support</h5>
+                    <h5>Multimedia Support</h5>
                     <p class="text-muted mb-2">
                         Support video and audio file upload for transcription, indexing, and embedding.
                     </p>
@@ -1911,7 +1987,7 @@
                             name="enable_document_intelligence_apim"
                             {% if settings.enable_document_intelligence_apim %}checked{% endif %}
                         >
-                        <label class="form-check-label" for="enable_document_intelligence_apim">
+                        <label class="form-check-label" for="enable_document_intelligence_apim"></label>
                             Use APIM instead of direct Document Intelligence endpoint
                         </label>
                     </div>

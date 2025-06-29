@@ -9,9 +9,13 @@ def get_settings():
         'app_title': 'Simple Chat',
         'landing_page_text': 'You can add text here and it supports Markdown. '
                              'You agree to our [acceptable user policy](acceptable_use_policy.html) by using this service.',
+        'landing_page_alignment': 'left',
         'show_logo': False,
+        'hide_app_title': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_favicon_base64': '',
+        'favicon_version': 1,
         'enable_dark_mode_default': False,
 
         # GPT Settings
@@ -65,6 +69,13 @@ def get_settings():
         'azure_apim_image_gen_subscription_key': '',
         'azure_apim_image_gen_deployment': '',
         'azure_apim_image_gen_api_version': '',
+
+        # Redis Cache Settings
+        'enable_redis_cache': False,
+        'redis_url': '',
+        'redis_key': '',
+        'redis_auth_type': '',
+
 
         # Workspaces
         'enable_user_workspace': True,
@@ -456,6 +467,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         'azure_apim_web_search_subscription_key',
         'azure_apim_ai_search_subscription_key',
         'azure_apim_document_intelligence_subscription_key',
+        'redis_key',
+        'azure_apim_redis_subscription_key',
         'azure_apim_content_safety_subscription_key',
         'content_safety_key',
         'office_docs_key',
