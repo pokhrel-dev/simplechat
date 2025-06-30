@@ -1,10 +1,13 @@
 <!-- BEGIN RELEASE_NOTES.MD BLOCK -->
 # Feature Release
 
-### **(v0.215.34)**
+### **(v0.215.35)**
 
 #### New Features
 
+*   **Health Check**
+    *   Provide admins ability to enable a healthcheck api.
+    *  (Ref: `route_external_health.py`)
 *   **Bulk Uploader Utility**
     *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.  
         *   Includes: CLI, mapping CSV, and documentation.  
