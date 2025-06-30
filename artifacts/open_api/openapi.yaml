@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Simple Chat APIs
-  version: 0.215.34
+  version: 0.215.35
   description: API for the Simple Chat, handling chats, conversations, documents, user settings, groups, feedback, prompts, models, safety, and admin functions.
 
 servers:
