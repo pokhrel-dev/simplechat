@@ -220,18 +220,6 @@ register_route_backend_group_prompts(app)
 # ------------------- Extenral Health Routes ----------
 register_route_external_health(app)
 
-# ------------------- Extenral Groups Routes ----------
-register_route_external_groups(app)
-
-# ------------------- Extenral Group Documents Routes ----------
-register_route_external_group_documents(app)
-
-# ------------------- Extenral Documents Routes ----------
-register_route_external_documents(app)
-
-# ------------------- Extenral Admin Settings Routes ----------
-register_route_external_admin_settings(app)
-
 if __name__ == '__main__':
     settings = get_settings()
     initialize_clients(settings)
