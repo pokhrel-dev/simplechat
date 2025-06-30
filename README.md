@@ -212,13 +212,10 @@ Enables detailed logging for the entire file ingestion and processing pipeline, 
 
 Below is a summary of latest features and bug fixes.
 
-### **(v0.215.36)**
+### **(v0.215.37)**
 
 #### New Features
 
-*   **Health Check**
-    *   Provide admins ability to enable a healthcheck api.
-    *  (Ref: `route_external_health.py`)
 *   **Bulk Uploader Utility**
     *   Introduced a command-line tool for batch uploading files mapped to users/groups via CSV. This dramatically reduces manual effort and errors during large-scale onboarding or migrations, making it easier for admins to populate the system with existing documents.
         *   Includes: CLI, mapping CSV, and documentation.
@@ -262,7 +259,10 @@ Below is a summary of latest features and bug fixes.
 *   **Architecture Diagram Update**
     *   Updated architecture.vsdx to include Redis cache, reflecting the new scalable architecture for documentation and planning.
         *   (Ref: `artifacts/architecture.vsdx`)
-
+*   **Health Check**
+    *   Provide admins ability to enable a healthcheck api.
+    *  (Ref: `route_external_health.py`)
+    
 #### Bug Fixes
 
 *   **Improved Code Snippet Readability in Dark Mode**
