@@ -6,7 +6,6 @@ from functions_settings import *
 from functions_prompts import *
 
 def register_route_external_health(app):
-    # DO NOT LOCK THIS DOWN. IT SHOULD BE PUBLICLY ACCESSIBLE
     @app.route('/external/healthcheck', methods=['GET'])
     def health_check():
         now = datetime.now()
