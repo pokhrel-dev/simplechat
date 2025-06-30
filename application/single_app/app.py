@@ -38,10 +38,6 @@ from functions_settings import get_settings
 
 
 from route_external_health import *
-from route_external_group_documents import *
-from route_external_documents import *
-from route_external_groups import *
-from route_external_admin_settings import *
 
 
 # =================== Helper Functions ===================
