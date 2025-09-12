@@ -12,26 +12,79 @@ def register_route_backend_settings(app):
     @login_required
     @admin_required
     def check_index_fields():
-        data     = request.get_json(force=True)
-        idx_type = data.get('indexType')  # 'user' or 'group'
+        try:
+            data = request.get_json(force=True)
+            idx_type = data.get('indexType')  # 'user', 'group', or 'public'
 
-        # load your golden JSON
-        fname = secure_filename(f'ai_search-index-{idx_type}.json')
-        base_path = os.path.join(current_app.root_path, 'static', 'json')
-        fpath = os.path.normpath(os.path.join(base_path, fname))
-        if os.path.commonpath([base_path, fpath]) != base_path:
-            raise Exception("Invalid file path")
-        with open(fpath, 'r') as f:
-            expected = json.load(f)
+            if not idx_type or idx_type not in ['user', 'group', 'public']:
+                return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
 
-        client  = get_index_client()
-        current = client.get_index(expected['name'])
+            # load your golden JSON
+            fname = secure_filename(f'ai_search-index-{idx_type}.json')
+            base_path = os.path.join(current_app.root_path, 'static', 'json')
+            fpath = os.path.normpath(os.path.join(base_path, fname))
+            if os.path.commonpath([base_path, fpath]) != base_path:
+                return jsonify({'error': 'Invalid file path'}), 400
+            
+            if not os.path.exists(fpath):
+                return jsonify({'error': f'Index schema file not found: {fname}'}), 404
+                
+            with open(fpath, 'r') as f:
+                expected = json.load(f)
 
-        existing_names   = { fld.name        for fld in current.fields }
-        expected_names   = { fld['name']      for fld in expected['fields'] }
-        missing          = sorted(expected_names - existing_names)
+            # Check if Azure AI Search is configured
+            settings = get_settings()
+            if not settings.get("azure_ai_search_endpoint"):
+                return jsonify({
+                    'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
+                    'needsConfiguration': True
+                }), 400
 
-        return jsonify({ 'missingFields': missing }), 200
+            try:
+                client = get_index_client()
+                current = client.get_index(expected['name'])
+                
+                existing_names = { fld.name for fld in current.fields }
+                expected_names = { fld['name'] for fld in expected['fields'] }
+                missing = sorted(expected_names - existing_names)
+
+                return jsonify({ 
+                    'missingFields': missing,
+                    'indexExists': True,
+                    'indexName': expected['name']
+                }), 200
+                
+            except ResourceNotFoundError as not_found_error:
+                # Index doesn't exist - this is the specific exception for "index not found"
+                return jsonify({
+                    'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
+                    'indexExists': False,
+                    'indexName': expected['name'],
+                    'needsCreation': True
+                }), 404
+            except Exception as search_error:
+                error_str = str(search_error).lower()
+                # Check for other index not found patterns (fallback)
+                if any(phrase in error_str for phrase in [
+                    "not found", "does not exist", "no index with the name", 
+                    "index does not exist", "could not find index"
+                ]):
+                    return jsonify({
+                        'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
+                        'indexExists': False,
+                        'indexName': expected['name'],
+                        'needsCreation': True
+                    }), 404
+                else:
+                    app.logger.error(f"Azure AI Search error: {search_error}")
+                    return jsonify({
+                        'error': f'Failed to connect to Azure AI Search: {str(search_error)}',
+                        'needsConfiguration': True
+                    }), 500
+
+        except Exception as e:
+            app.logger.error(f"Error in check_index_fields: {str(e)}")
+            return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 
     @app.route('/api/admin/settings/fix_index_fields', methods=['POST'])
@@ -112,6 +165,74 @@ def register_route_backend_settings(app):
 
         except Exception as e:
             return jsonify({ 'error': str(e) }), 500
+
+    @app.route('/api/admin/settings/create_index', methods=['POST'])
+    @login_required
+    @admin_required
+    def create_index():
+        """Create an AI Search index from scratch using the JSON schema."""
+        try:
+            data = request.get_json(force=True)
+            idx_type = data.get('indexType')  # 'user', 'group', or 'public'
+
+            if not idx_type or idx_type not in ['user', 'group', 'public']:
+                return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
+
+            # Load the JSON schema
+            json_name = secure_filename(f'ai_search-index-{idx_type}.json')
+            base_path = os.path.join(current_app.root_path, 'static', 'json')
+            json_path = os.path.normpath(os.path.join(base_path, json_name))
+            if os.path.commonpath([base_path, json_path]) != base_path:
+                return jsonify({'error': 'Invalid file path'}), 400
+            
+            if not os.path.exists(json_path):
+                return jsonify({'error': f'Index schema file not found: {json_name}'}), 404
+
+            with open(json_path, 'r') as f:
+                index_definition = json.load(f)
+
+            # Check if Azure AI Search is configured
+            settings = get_settings()
+            if not settings.get("azure_ai_search_endpoint"):
+                return jsonify({
+                    'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
+                    'needsConfiguration': True
+                }), 400
+
+            client = get_index_client()
+            
+            # Check if index already exists
+            try:
+                existing_index = client.get_index(index_definition['name'])
+                return jsonify({
+                    'error': f'Index "{index_definition["name"]}" already exists',
+                    'indexExists': True
+                }), 409
+            except ResourceNotFoundError:
+                # Index doesn't exist, which is what we want for creation
+                pass
+            except Exception as e:
+                # Other errors checking if index exists
+                app.logger.error(f"Error checking if index exists: {e}")
+                # Continue with creation attempt anyway
+
+            # Create the index using the JSON definition
+            from azure.search.documents.indexes.models import SearchIndex
+            index = SearchIndex.deserialize(index_definition)
+            
+            # Create the index
+            result = client.create_index(index)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Successfully created index "{result.name}"',
+                'indexName': result.name,
+                'fieldsCount': len(result.fields)
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error creating index: {str(e)}")
+            return jsonify({'error': f'Failed to create index: {str(e)}'}), 500
     
     @app.route('/api/admin/settings/test_connection', methods=['POST'])
     @login_required
@@ -176,6 +297,10 @@ def get_index_client() -> SearchIndexClient:
         endpoint = settings["azure_ai_search_endpoint"].rstrip("/")
         if settings.get("azure_ai_search_authentication_type", "key") == "managed_identity":
             credential = DefaultAzureCredential()
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                return SearchIndexClient(endpoint=endpoint,
+                                          credential=credential,
+                                          audience=search_resource_manager)
         else:
             credential = AzureKeyCredential(settings["azure_ai_search_key"])
 
@@ -415,11 +540,17 @@ def _test_safety_connection(payload):
         key = direct_data.get('key')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                content_safety_client = ContentSafetyClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential(),
+                    credential_scopes=[cognitive_services_scope]
+                )
+            else:
+                content_safety_client = ContentSafetyClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential()
+                )
         else:
             content_safety_client = ContentSafetyClient(
                 endpoint=endpoint,
@@ -436,71 +567,9 @@ def _test_safety_connection(payload):
     except Exception as e:
         return jsonify({'error': f'Safety connection error: {str(e)}'}), 500
 
-
-def _test_web_search_connection(payload):
-    """Attempt to connect to Bing (or your APIM-protected) web search endpoint."""
-    enabled = payload.get('enabled', False)
-    if not enabled:
-        return jsonify({'message': 'Web Search is disabled, skipping test'}), 200
-
-    enable_apim = payload.get('enable_apim', False)
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        subscription_key = apim_data.get('subscription_key')
-        # deployment, api_version, etc. if relevant
-        url = f"{endpoint.rstrip('/')}/bing/v7.0/search"
-        headers = {
-            'Ocp-Apim-Subscription-Key': subscription_key
-        }
-        params = { 'q': 'Test' }
-    else:
-        direct_data = payload.get('direct', {})
-        # For direct Bing calls, you typically do something like:
-        key = direct_data.get('key')
-        url = "https://api.bing.microsoft.com/v7.0/search"
-        headers = {
-            'Ocp-Apim-Subscription-Key': key
-        }
-        params = { 'q': 'Test' }
-
-    resp = requests.get(url, headers=headers, params=params, timeout=10)
-    if resp.status_code == 200:
-        return jsonify({'message': 'Web search connection successful'}), 200
-    else:
-        raise Exception(f"Web search connection error: {resp.status_code} - {resp.text}")
-
-
 def _test_azure_ai_search_connection(payload):
     """Attempt to connect to Azure Cognitive Search (or APIM-wrapped)."""
     enable_apim = payload.get('enable_apim', False)
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        subscription_key = apim_data.get('subscription_key')
-
-        content_safety_client = ContentSafetyClient(
-            endpoint=endpoint,
-            credential=AzureKeyCredential(subscription_key)
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        key = direct_data.get('key')
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
-        else:
-            content_safety_client = ContentSafetyClient(
-                endpoint=endpoint,
-                credential=AzureKeyCredential(key)
-            )
 
     if enable_apim:
         apim_data = payload.get('apim', {})
@@ -516,10 +585,22 @@ def _test_azure_ai_search_connection(payload):
         endpoint = direct_data.get('endpoint')  # e.g. https://<searchservice>.search.windows.net
         key = direct_data.get('key')
         url = f"{endpoint.rstrip('/')}/indexes?api-version=2023-11-01"
-        headers = {
-            'api-key': key,
-            'Content-Type': 'application/json'
-        }
+
+        if direct_data.get('auth_type') == 'managed_identity':
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"): # change credential scopes for US Gov or custom environments
+                credential_scopes=search_resource_manager + "/.default"
+            arm_scope = credential_scopes
+            credential = DefaultAzureCredential()
+            arm_token = credential.get_token(arm_scope).token
+            headers = {
+                'Authorization': f'Bearer {arm_token}',
+                'Content-Type': 'application/json'
+            }
+        else:
+            headers = {
+                'api-key': key,
+                'Content-Type': 'application/json'
+            }
 
     # A small GET to /indexes to verify we have connectivity
     resp = requests.get(url, headers=headers, timeout=10)
@@ -540,7 +621,7 @@ def _test_azure_doc_intelligence_connection(payload):
         endpoint = apim_data.get('endpoint')
         subscription_key = apim_data.get('subscription_key')
 
-        document_intelligence_client = DocumentAnalysisClient(
+        document_intelligence_client = DocumentIntelligenceClient(
             endpoint=endpoint,
             credential=AzureKeyCredential(subscription_key)
         )
@@ -550,24 +631,42 @@ def _test_azure_doc_intelligence_connection(payload):
         key = direct_data.get('key')
 
         if direct_data.get('auth_type') == 'managed_identity':
-            
-            document_intelligence_client = DocumentAnalysisClient(
-                endpoint=endpoint,
-                credential=DefaultAzureCredential()
-            )
+            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+                document_intelligence_client = DocumentIntelligenceClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential(),
+                    credential_scopes=[cognitive_services_scope],
+                    api_version="2024-11-30"    # Must be specified otherwise looks for 2023-07-31-preview by default which is not a valid version in Azure Government
+                )
+            else:
+                document_intelligence_client = DocumentIntelligenceClient(
+                    endpoint=endpoint,
+                    credential=DefaultAzureCredential()
+                )
         else:
-            document_intelligence_client = DocumentAnalysisClient(
+            document_intelligence_client = DocumentIntelligenceClient(
                 endpoint=endpoint,
                 credential=AzureKeyCredential(key)
             )
     
     # Use local test file instead of URL for better offline testing
     test_file_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
-    with open(test_file_path, 'rb') as f:
+    if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+        # Required format for Document Intelligence API version 2024-11-30 and later
+        with open(test_file_path, 'rb') as f:
+            file_bytes = f.read()
+            base64_source = base64.b64encode(file_bytes).decode('utf-8')
+
         poller = document_intelligence_client.begin_analyze_document(
-            model_id="prebuilt-read",
-            document=f
+            "prebuilt-read",
+            {"base64Source": base64_source}
         )
+    else:
+        with open(test_file_path, 'rb') as f:
+            poller = document_intelligence_client.begin_analyze_document(
+                model_id="prebuilt-read",
+                document=f
+            )
 
     max_wait_time = 600
     start_time = time.time()
@@ -578,7 +677,7 @@ def _test_azure_doc_intelligence_connection(payload):
             break
         if time.time() - start_time > max_wait_time:
             raise TimeoutError("Document analysis took too long.")
-        time.sleep(30)
+        time.sleep(10)
 
     if status == "succeeded":
         return jsonify({'message': 'Azure document intelligence connection successful'}), 200

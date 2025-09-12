@@ -32,7 +32,10 @@ export function resetFileButton() {
 
   if (fileBtn) {
     fileBtn.classList.remove("active");
-    fileBtn.querySelector(".file-btn-text").textContent = "";
+    const fileBtnText = fileBtn.querySelector(".file-btn-text");
+    if (fileBtnText) {
+      fileBtnText.textContent = "File";
+    }
   }
 
   if (uploadBtn) {
@@ -46,6 +49,15 @@ export function resetFileButton() {
 
 export function uploadFileToConversation(file) {
   const uploadingIndicatorEl = showFileUploadingMessage();
+  
+  // Update the file button to show "Uploading..." state
+  const fileBtn = document.getElementById("choose-file-btn");
+  if (fileBtn) {
+    const fileBtnText = fileBtn.querySelector(".file-btn-text");
+    if (fileBtnText) {
+      fileBtnText.textContent = "Uploading...";
+    }
+  }
 
   const formData = new FormData();
   formData.append("file", file);
@@ -158,12 +170,87 @@ export function showFileContentPopup(fileContent, filename, isTable) {
   if (!fileContentElement) return;
 
   if (isTable) {
-    fileContentElement.innerHTML = `<div class="table-responsive">${fileContent}</div>`;
+    // Check if content is CSV (new format) or HTML (legacy format)
+    const isCSVContent = !fileContent.trim().startsWith('<table') && 
+                         !fileContent.trim().startsWith('<') && 
+                         fileContent.includes(',');
+    
+    if (isCSVContent) {
+      // Convert CSV to HTML table for display
+      // Use a simple CSV parser that handles quoted fields
+      const parseCSVLine = (line) => {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+      
+      const csvLines = fileContent.trim().split('\n');
+      if (csvLines.length > 0) {
+        const headers = parseCSVLine(csvLines[0]);
+        const headerCount = headers.length;
+        const rows = csvLines.slice(1);
+        
+        let tableHTML = '<table class="table table-striped table-bordered"><thead><tr>';
+        headers.forEach(header => {
+          tableHTML += `<th>${escapeHtml(header)}</th>`;
+        });
+        tableHTML += '</tr></thead><tbody>';
+        
+        rows.forEach(row => {
+          if (row.trim()) {
+            const cells = parseCSVLine(row);
+            // Ensure all rows have the same number of columns as headers
+            while (cells.length < headerCount) {
+              cells.push(''); // Add empty cells for missing columns
+            }
+            // Truncate if there are too many columns (shouldn't happen but safety check)
+            if (cells.length > headerCount) {
+              cells.splice(headerCount);
+            }
+            
+            tableHTML += '<tr>';
+            cells.forEach(cell => {
+              tableHTML += `<td>${escapeHtml(cell)}</td>`;
+            });
+            tableHTML += '</tr>';
+          }
+        });
+        
+        tableHTML += '</tbody></table>';
+        fileContentElement.innerHTML = `<div class="table-responsive">${tableHTML}</div>`;
+      } else {
+        fileContentElement.innerHTML = '<p>No data available</p>';
+      }
+    } else {
+      // Legacy HTML format
+      fileContentElement.innerHTML = `<div class="table-responsive">${fileContent}</div>`;
+    }
+    
+    // Apply DataTable after content is set
     $(document).ready(function () {
-      $("#file-content table").DataTable({
-        responsive: true,
-        scrollX: true,
-      });
+      const table = $("#file-content table");
+      if (table.length > 0) {
+        table.DataTable({
+          responsive: true,
+          scrollX: true,
+          destroy: true // Allow re-initialization
+        });
+      }
     });
   } else {
     fileContentElement.innerHTML = `<pre style="white-space: pre-wrap;">${fileContent}</pre>`;
@@ -171,6 +258,18 @@ export function showFileContentPopup(fileContent, filename, isTable) {
 
   const modal = new bootstrap.Modal(modalContainer);
   modal.show();
+}
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, function(m) { return map[m]; });
 }
 
 export function getUrlParameter(name) {
@@ -244,8 +343,19 @@ if (fileInputEl) {
     if (file) {
       fileBtn.classList.add("active");
       fileBtn.querySelector(".file-btn-text").textContent = file.name;
-      uploadBtn.style.display = "block";
       cancelFileSelection.style.display = "inline";
+      
+      // Hide the upload button since we're auto-uploading
+      uploadBtn.style.display = "none";
+      
+      // Automatically upload the file
+      if (!currentConversationId) {
+        createNewConversation(() => {
+          uploadFileToConversation(file);
+        });
+      } else {
+        uploadFileToConversation(file);
+      }
     } else {
       resetFileButton();
     }

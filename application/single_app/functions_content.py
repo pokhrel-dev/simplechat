@@ -1,5 +1,6 @@
 # functions_content.py
 
+from functions_debug import debug_print
 from config import *
 from functions_settings import *
 from functions_logging import *
@@ -19,11 +20,55 @@ def extract_content_with_azure_di(file_path):
     """
     try:
         document_intelligence_client = CLIENTS['document_intelligence_client'] # Ensure CLIENTS is populated
-        with open(file_path, "rb") as f:
+        
+        # Debug logging for troubleshooting
+        debug_print(f"[DEBUG] Starting Azure DI extraction for: {os.path.basename(file_path)}")
+        debug_print(f"[DEBUG] AZURE_ENVIRONMENT: {AZURE_ENVIRONMENT}")
+
+        if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
+            # Required format for Document Intelligence API version 2024-11-30
+            debug_print("[DEBUG] Using US Government/Custom environment with base64Source")
+            with open(file_path, 'rb') as f:
+                file_bytes = f.read()
+                base64_source = base64.b64encode(file_bytes).decode('utf-8')
+            
+            # For stable API 1.0.2, use the correct body parameter structure
+            analyze_request = {"base64Source": base64_source}
             poller = document_intelligence_client.begin_analyze_document(
                 model_id="prebuilt-read",
-                document=f
+                body=analyze_request
             )
+            debug_print("[DEBUG] Successfully started analysis with base64Source")
+        else:
+            debug_print("[DEBUG] Using Public cloud environment")
+            with open(file_path, 'rb') as f:
+                # For stable API 1.0.2, the file needs to be passed as part of the body
+                file_content = f.read()
+                
+                # Try different approaches for the stable API
+                try:
+                    # Method 1: Use bytes directly in body
+                    poller = document_intelligence_client.begin_analyze_document(
+                        model_id="prebuilt-read",
+                        body=file_content,
+                        content_type="application/pdf"
+                    )
+                    debug_print("[DEBUG] Successfully started analysis with body as bytes")
+                except Exception as e1:
+                    debug_print(f"[DEBUG] Method 1 failed: {e1}")
+                    
+                    try:
+                        # Method 2: Use base64 format for consistency
+                        base64_source = base64.b64encode(file_content).decode('utf-8')
+                        analyze_request = {"base64Source": base64_source}
+                        poller = document_intelligence_client.begin_analyze_document(
+                            model_id="prebuilt-read",
+                            body=analyze_request
+                        )
+                        debug_print("[DEBUG] Successfully started analysis with base64Source in body")
+                    except Exception as e2:
+                        debug_print(f"[ERROR] Both methods failed. Method 1: {e1}, Method 2: {e2}")
+                        raise e1
 
         max_wait_time = 600
         start_time = time.time()
@@ -126,14 +171,16 @@ def extract_content_with_azure_di(file_path):
 def extract_table_file(file_path, file_ext):
     try:
         if file_ext == '.csv':
-            df = pd.read_csv(file_path)
+            df = pandas.read_csv(file_path)
         elif file_ext in ['.xls', '.xlsx']:
-            df = pd.read_excel(file_path)
+            df = pandas.read_excel(file_path)
         else:
             raise ValueError("Unsupported file extension for table extraction.")
         
-        table_html = df.to_html(index=False, classes='table table-striped table-bordered')
-        return table_html
+        # Return CSV format instead of HTML for more efficient storage and LLM processing
+        # This drastically reduces token count and storage costs
+        csv_content = df.to_csv(index=False)
+        return csv_content
     except Exception as e:
         raise
 
@@ -328,50 +375,3 @@ def generate_embedding(
 
         except Exception as e:
             raise
-
-def get_all_chunks(document_id, user_id):
-    try:
-        search_client_user = CLIENTS["search_client_user"]
-        results = search_client_user.search(
-            search_text="*",
-            filter=f"document_id eq '{document_id}' and user_id eq '{user_id}'",
-            select=["id", "chunk_text", "chunk_id", "file_name", "user_id", "version", "chunk_sequence", "upload_date"]
-        )
-        return results
-    except Exception as e:
-        print(f"Error retrieving chunks for document {document_id}: {e}")
-        raise
-
-def update_chunk_metadata(chunk_id, user_id, document_id, **kwargs):
-    try:
-        search_client_user = CLIENTS["search_client_user"]
-        chunk_item = search_client_user.get_document(chunk_id)
-
-        if not chunk_item:
-            raise Exception("Chunk not found")
-        
-        if chunk_item['user_id'] != user_id:
-            raise Exception("Unauthorized access to chunk")
-        
-        if chunk_item['document_id'] != document_id:
-            raise Exception("Chunk does not belong to document")
-        
-        if 'chunk_keywords' in kwargs:
-            chunk_item['chunk_keywords'] = kwargs['chunk_keywords']
-
-        if 'chunk_summary' in kwargs:
-            chunk_item['chunk_summary'] = kwargs['chunk_summary']
-
-        if 'author' in kwargs:
-            chunk_item['author'] = kwargs['author']
-
-        if 'title' in kwargs:
-            chunk_item['title'] = kwargs['title']
-
-        if 'document_classification' in kwargs:
-            chunk_item['document_classification'] = kwargs['document_classification']
-
-        search_client_user.upload_documents(documents=[chunk_item])
-    except Exception as e:
-        print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
-        raise

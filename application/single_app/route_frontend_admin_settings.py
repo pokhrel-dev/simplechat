@@ -29,6 +29,8 @@ def register_route_frontend_admin_settings(app):
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
             settings['require_member_of_create_group'] = False
+        if 'require_member_of_create_public_workspace' not in settings:
+            settings['require_member_of_create_public_workspace'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
             settings['require_member_of_safety_violation_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
@@ -45,8 +47,96 @@ def register_route_frontend_admin_settings(app):
                 {"label": "N/A", "color": "#808080"},
                 {"label": "Pending", "color": "#0000FF"}
             ]
+
+        # Ensure external links fields exist with defaults if missing in DB
+        if 'enable_external_links' not in settings:
+            settings['enable_external_links'] = False
+        if 'external_links_menu_name' not in settings:
+            settings['external_links_menu_name'] = 'External Links'
+        if 'external_links_force_menu' not in settings:
+            settings['external_links_force_menu'] = False
+        if 'external_links' not in settings or not isinstance(settings.get('external_links'), list):
+            settings['external_links'] = [
+                {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+                {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
+            ]
         # --- End Refined Default Checks ---
 
+        if 'enable_appinsights_global_logging' not in settings:
+            settings['enable_appinsights_global_logging'] = False
+        if 'enable_debug_logging' not in settings:
+            settings['enable_debug_logging'] = False
+
+        # --- Add default for semantic_kernel ---
+        if 'per_user_semantic_kernel' not in settings:
+            settings['per_user_semantic_kernel'] = False
+        if 'enable_semantic_kernel' not in settings:
+            settings['enable_semantic_kernel'] = False
+        if 'enable_time_plugin' not in settings:
+            settings['enable_time_plugin'] = False
+        if 'enable_http_plugin' not in settings:
+            settings['enable_http_plugin'] = False
+        if 'enable_wait_plugin' not in settings:
+            settings['enable_wait_plugin'] = False
+        if 'enable_math_plugin' not in settings:
+            settings['enable_math_plugin'] = False
+        if 'enable_text_plugin' not in settings:
+            settings['enable_text_plugin'] = False
+        if 'enable_fact_memory_plugin' not in settings:
+            settings['enable_fact_memory_plugin'] = False
+        if 'enable_default_embedding_model_plugin' not in settings:
+            settings['enable_default_embedding_model_plugin'] = False
+        if 'enable_multi_agent_orchestration' not in settings:
+            settings['enable_multi_agent_orchestration'] = False
+        if 'max_rounds_per_agent' not in settings:
+            settings['max_rounds_per_agent'] = 1
+        if 'orchestration_type' not in settings:
+            settings['orchestration_type'] = 'default_agent'
+        # NOTE: semantic_kernel_plugins are now stored in containers, not settings
+        if 'merge_global_semantic_kernel_with_workspace' not in settings:
+            settings['merge_global_semantic_kernel_with_workspace'] = False
+        # NOTE: semantic_kernel_agents are now stored in containers, not settings
+        if 'global_selected_agent' not in settings:
+            # Use container-based storage for global agents instead of legacy settings
+            from functions_global_agents import get_all_global_agents
+            try:
+                global_agents = get_all_global_agents()
+                default_agent = next((a for a in global_agents if a.get('default_agent')), None)
+                if default_agent:
+                    settings['global_selected_agent'] = {
+                        'name': default_agent['name'],
+                        'is_global': True
+                    }
+                else:
+                    # Fallback to first agent if no default found
+                    if global_agents:
+                        settings['global_selected_agent'] = {
+                            'name': global_agents[0]['name'],
+                            'is_global': True
+                        }
+                    else: 
+                        settings['global_selected_agent'] = {
+                            'name': 'default_agent',
+                            'is_global': True
+                        }
+            except Exception:
+                # Fallback if container access fails
+                settings['global_selected_agent'] = {
+                    'name': 'default_agent',
+                    'is_global': True
+                }
+        if 'allow_user_agents' not in settings:
+            settings['allow_user_agents'] = False
+        if 'allow_user_custom_agent_endpoints' not in settings:
+            settings['allow_user_custom_agent_endpoints'] = False
+        if 'allow_user_plugins' not in settings:
+            settings['allow_user_plugins'] = False
+        if 'allow_group_agents' not in settings:
+            settings['allow_group_agents'] = False
+        if 'allow_group_custom_agent_endpoints' not in settings:
+            settings['allow_group_custom_agent_endpoints'] = False
+        if 'allow_group_plugins' not in settings:
+            settings['allow_group_plugins'] = False
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -55,6 +145,10 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_text'] = ''
         if 'classification_banner_color' not in settings:
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
+        
+        # --- Add defaults for left nav ---
+        if 'enable_left_nav_default' not in settings:
+            settings['enable_left_nav_default'] = True
 
         if request.method == 'GET':
             # --- Model fetching logic remains the same ---
@@ -143,6 +237,7 @@ def register_route_frontend_admin_settings(app):
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
+            require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_feedback_admin = form_data.get('require_member_of_feedback_admin') == 'on'
 
@@ -176,13 +271,53 @@ def register_route_frontend_admin_settings(app):
                 # Keep existing categories from the database instead of overwriting with bad data
                 parsed_categories = settings.get('document_classification_categories', []) # Fallback to existing
 
+            # --- Handle External Links Toggle ---
+            enable_external_links = form_data.get('enable_external_links') == 'on'
+
+            # --- Handle External Links Menu Name ---
+            external_links_menu_name = form_data.get('external_links_menu_name', 'External Links').strip()
+            if not external_links_menu_name:  # If empty, set to default
+                external_links_menu_name = 'External Links'
+
+            # --- Handle External Links Force Menu ---
+            external_links_force_menu = form_data.get('external_links_force_menu') == 'on'
+
+            # --- Handle External Links JSON ---
+            external_links_json = form_data.get("external_links_json", "[]") # Default to empty list string
+            parsed_external_links = [] # Initialize
+            try:
+                parsed_external_links_raw = json.loads(external_links_json)
+                # Validation
+                if isinstance(parsed_external_links_raw, list) and all(
+                    isinstance(item, dict) and
+                    'label' in item and isinstance(item['label'], str) and item['label'].strip() and # Ensure label is non-empty string
+                    'url' in item and isinstance(item['url'], str) and item['url'].strip() # Ensure URL is non-empty string
+                    for item in parsed_external_links_raw
+                ):
+                    # Sanitize/clean data slightly
+                    parsed_external_links = [
+                        {'label': item['label'].strip(), 'url': item['url'].strip()}
+                        for item in parsed_external_links_raw
+                    ]
+                    print(f"Successfully parsed {len(parsed_external_links)} external links.")
+                else:
+                     raise ValueError("Invalid format: Expected a list of objects with 'label' and 'url' keys.")
+
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing external_links_json: {e}")
+                flash(f'Error processing external links: {e}. Changes for external links not saved.', 'danger')
+                # Keep existing external links from the database instead of overwriting with bad data
+                parsed_external_links = settings.get('external_links', []) # Fallback to existing
+
             # Enhanced Citations...
             enable_enhanced_citations = form_data.get('enable_enhanced_citations') == 'on'
+            office_docs_storage_account_blob_endpoint = form_data.get('office_docs_storage_account_blob_endpoint', '').strip()
             office_docs_storage_account_url = form_data.get('office_docs_storage_account_url', '').strip()
+
             
             # Validate that if enhanced citations are enabled, a connection string is provided
-            if enable_enhanced_citations and not office_docs_storage_account_url:
-                flash("Enhanced Citations cannot be enabled without providing a connection string. Feature has been disabled.", "danger")
+            if enable_enhanced_citations and not (office_docs_storage_account_blob_endpoint or office_docs_storage_account_url):
+                flash("Enhanced Citations cannot be enabled without providing a connection string or blob service endpoint. Feature has been disabled.", "danger")
                 enable_enhanced_citations = False
 
             # Model JSON Parsing (Your existing logic is fine)
@@ -214,19 +349,56 @@ def register_route_frontend_admin_settings(app):
             classification_banner_text = form_data.get('classification_banner_text', '').strip()
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
 
+            # --- Application Insights Logging Toggle ---
+            enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
+            
+            # --- Debug Logging Toggle ---
+            enable_debug_logging = form_data.get('enable_debug_logging') == 'on'
+
+            # --- Authentication & Redirect Settings ---
+            enable_front_door = form_data.get('enable_front_door') == 'on'
+            front_door_url = form_data.get('front_door_url', '').strip()
+            
+            # Validate Front Door URL if provided
+            def is_valid_url(url):
+                if not url:
+                    return True  # Empty URL is valid (no redirect)
+                import re
+                url_pattern = re.compile(
+                    r'^https?://'  # http:// or https://
+                    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+                    r'localhost|'  # localhost...
+                    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+                    r'(?::\d+)?'  # optional port
+                    r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+                return url_pattern.match(url) is not None
+            
+            if front_door_url and not is_valid_url(front_door_url):
+                flash('Invalid Front Door URL format. Please provide a valid HTTP/HTTPS URL.', 'danger')
+                front_door_url = ''
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
+                # Logging
+                'enable_appinsights_global_logging': enable_appinsights_global_logging,
+                'enable_debug_logging': enable_debug_logging,
                 # General
                 'app_title': app_title,
                 'show_logo': form_data.get('show_logo') == 'on',
                 'hide_app_title': form_data.get('hide_app_title') == 'on',
                 'custom_logo_base64': settings.get('custom_logo_base64', ''),
                 'logo_version': settings.get('logo_version', 1),
+                'custom_logo_dark_base64': settings.get('custom_logo_dark_base64', ''),
+                'logo_dark_version': settings.get('logo_dark_version', 1),
                 'custom_favicon_base64': settings.get('custom_favicon_base64', ''),
                 'favicon_version': settings.get('favicon_version', 1),
                 'landing_page_text': form_data.get('landing_page_text', ''),
                 'landing_page_alignment': form_data.get('landing_page_alignment', 'left'),
                 'enable_dark_mode_default': form_data.get('enable_dark_mode_default') == 'on',
+                'enable_left_nav_default': form_data.get('enable_left_nav_default') == 'on',
+                'enable_health_check': form_data.get('enable_health_check') == 'on',
+                'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
+                'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -280,8 +452,11 @@ def register_route_frontend_admin_settings(app):
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
                 'enable_group_workspaces': form_data.get('enable_group_workspaces') == 'on',
+                'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
+                'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_file_processing_logs': form_data.get('enable_file_processing_logs') == 'on',
-                'require_member_of_create_group': require_member_of_create_group, # ADDE
+                'require_member_of_create_group': require_member_of_create_group,
+                'require_member_of_create_public_workspace': require_member_of_create_public_workspace,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
@@ -295,10 +470,17 @@ def register_route_frontend_admin_settings(app):
                 'enable_document_classification': enable_document_classification,
                 'document_classification_categories': parsed_categories, # Store the PARSED LIST
 
+                # *** External Links ***
+                'enable_external_links': enable_external_links,
+                'external_links_menu_name': external_links_menu_name,
+                'external_links_force_menu': external_links_force_menu,
+                'external_links': parsed_external_links, # Store the PARSED LIST
+
                 # Enhanced Citations
                 'enable_enhanced_citations': enable_enhanced_citations,
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
+                'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
                 'office_docs_storage_account_url': office_docs_storage_account_url,
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
                 'office_docs_key': form_data.get('office_docs_key', '').strip(),
@@ -326,7 +508,6 @@ def register_route_frontend_admin_settings(app):
 
                 # Search (Web Search Direct & APIM)
                 'enable_web_search': form_data.get('enable_web_search') == 'on',
-                'bing_search_key': form_data.get('bing_search_key', '').strip(),
                 'enable_web_search_apim': form_data.get('enable_web_search_apim') == 'on',
                 'azure_apim_web_search_endpoint': form_data.get('azure_apim_web_search_endpoint', '').strip(),
                 'azure_apim_web_search_subscription_key': form_data.get('azure_apim_web_search_subscription_key', '').strip(),
@@ -347,13 +528,17 @@ def register_route_frontend_admin_settings(app):
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
 
+                # Authentication & Redirect Settings
+                'enable_front_door': enable_front_door,
+                'front_door_url': front_door_url,
+
                 # Other
                 'max_file_size_mb': max_file_size_mb,
                 'conversation_history_limit': conversation_history_limit,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
 
                 # Video file settings with Azure Video Indexer Settings
-                'video_indexer_endpoint': form_data.get('video_indexer_endpoint', 'https://api.videoindexer.ai').strip(),
+                'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
                 'video_indexer_location': form_data.get('video_indexer_location', '').strip(),
                 'video_indexer_account_id': form_data.get('video_indexer_account_id', '').strip(),
                 'video_indexer_api_key': form_data.get('video_indexer_api_key', '').strip(),
@@ -376,6 +561,13 @@ def register_route_frontend_admin_settings(app):
                 'classification_banner_text': classification_banner_text,
                 'classification_banner_color': classification_banner_color,
             }
+            
+            # --- Prevent Legacy Fields from Being Created/Updated ---
+            # Remove semantic_kernel_agents and semantic_kernel_plugins if they somehow got added
+            if 'semantic_kernel_agents' in new_settings:
+                del new_settings['semantic_kernel_agents']
+            if 'semantic_kernel_plugins' in new_settings:
+                del new_settings['semantic_kernel_plugins']
             
             logo_file = request.files.get('logo_file')
             if logo_file and allowed_file(logo_file.filename, ALLOWED_EXTENSIONS_IMG):
@@ -458,6 +650,89 @@ def register_route_frontend_admin_settings(app):
                     flash(f"Error processing logo file: {e}. Existing logo preserved.", "danger")
                     # On error, new_settings['custom_logo_base64'] keeps its initial value (the old logo)
 
+            # Process dark mode logo file upload
+            logo_dark_file = request.files.get('logo_dark_file')
+            new_dark_logo_processed = False
+            if logo_dark_file and allowed_file(logo_dark_file.filename, ALLOWED_EXTENSIONS_IMG):
+                try:
+                    # 1) Read file fully into memory:
+                    file_bytes = logo_dark_file.read()
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Dark mode logo file uploaded: {logo_dark_file.filename}"
+                    )
+
+                    # 2) Load into Pillow from the original bytes for processing
+                    in_memory_for_process = BytesIO(file_bytes) # Use original bytes
+                    img = Image.open(in_memory_for_process)
+                    
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Loaded dark mode logo image for processing: {logo_dark_file.filename}"
+                    )
+
+                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    elif img.mode != 'RGB' and img.mode != 'RGBA':
+                         img = img.convert('RGB')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image mode for processing: {logo_dark_file.filename} (mode: {img.mode})"
+                    )
+
+                    # 4) Resize to height=100
+                    w, h = img.size
+                    if h > 100:
+                        aspect = w / h
+                        new_height = 100
+                        new_width = int(aspect * new_height)
+                        # Use LANCZOS (previously ANTIALIAS) for resizing
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Resized dark mode logo image for processing: {logo_dark_file.filename} (new size: {img.size})"
+                    )
+
+                    # 5) Convert to PNG in-memory
+                    img_bytes_io = BytesIO()
+                    img.save(img_bytes_io, format='PNG')
+                    png_data = img_bytes_io.getvalue()
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image to PNG for processing: {logo_dark_file.filename}"
+                    )
+
+                    # 6) Turn to base64
+                    base64_str = base64.b64encode(png_data).decode('utf-8')
+
+                    add_file_task_to_file_processing_log(
+                        document_id='Image_Upload', # Placeholder if needed
+                        user_id='New_image',
+                        content=f"Converted dark mode logo image to base64 for processing: {base64_str}"
+                    )
+
+                    # ****** CHANGE HERE: Update only on success *****
+                    new_settings['custom_logo_dark_base64'] = base64_str
+
+                    current_version = settings.get('logo_dark_version', 1) # Get version from settings loaded at start
+                    new_settings['logo_dark_version'] = current_version + 1 # Increment
+                    new_dark_logo_processed = True
+
+
+                except Exception as e:
+                    print(f"Error processing dark mode logo file: {e}") # Log the error for debugging
+                    flash(f"Error processing dark mode logo file: {e}. Existing dark mode logo preserved.", "danger")
+                    # On error, new_settings['custom_logo_dark_base64'] keeps its initial value (the old logo)
+
             # Process favicon file upload
             favicon_file = request.files.get('favicon_file')
             if favicon_file and allowed_file(favicon_file.filename, ALLOWED_EXTENSIONS_IMG):
@@ -536,12 +811,16 @@ def register_route_frontend_admin_settings(app):
             # new_settings now contains either the new logo/favicon base64 or the original ones
             if update_settings(new_settings):
                 flash("Admin settings updated successfully.", "success")
+                # Reconfigure Application Insights logging immediately if the setting changed
+                from functions_appinsights import setup_appinsights_logging
+                setup_appinsights_logging(get_settings())
                 # Ensure static file is created/updated *after* successful DB save
                 # Pass the *just saved* data (or fetch fresh) to ensure consistency
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
                 if updated_settings_for_file:
                     ensure_custom_logo_file_exists(app, updated_settings_for_file)
                     ensure_custom_favicon_file_exists(app, updated_settings_for_file)
+                    initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
 

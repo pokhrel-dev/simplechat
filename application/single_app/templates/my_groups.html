@@ -43,12 +43,14 @@
   <hr/>
 
   <div class="row mb-3 gy-2">
+      {% if can_create_groups %}
       <div class="col-md-auto">
           <!-- Create Group Button trigger modal -->
           <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createGroupModal">
               <i class="bi bi-plus-circle-fill me-1"></i> Create New Group
           </button>
       </div>
+      {% endif %}
       <div class="col-md-auto">
           <!-- Find Group Button trigger modal -->
           <button type="button" class="btn btn-info btn-sm" data-bs-toggle="modal" data-bs-target="#findGroupModal">
@@ -112,6 +114,7 @@
 </div> <!-- End Container -->
 
 <!-- Create Group Modal -->
+{% if can_create_groups %}
 <!-- Keep Modal Structure As Is -->
 <div class="modal fade" id="createGroupModal" tabindex="-1" aria-labelledby="createGroupModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -139,11 +142,12 @@
     </form>
   </div>
 </div>
+{% endif %}
 
 <!-- Find Group Modal -->
 <!-- Keep Modal Structure As Is, maybe update search button ID -->
 <div class="modal fade" id="findGroupModal" tabindex="-1" aria-labelledby="findGroupModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-xl">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="findGroupModalLabel">Find a Group to Join</h5>
@@ -156,9 +160,9 @@
         </div>
         <div class="table-responsive">
           <table class="table table-hover" id="globalGroupResultsTable">
-            <thead><tr><th>Name</th><th>Description</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Description</th><th>Owner</th><th>Members</th><th>Actions</th></tr></thead>
             <tbody>
-                <tr><td colspan="3" class="text-center text-muted">Enter search term and click Search.</td></tr>
+                <tr><td colspan="5" class="text-center text-muted">Enter search term and click Search.</td></tr>
             </tbody>
           </table>
         </div>
@@ -193,6 +197,7 @@
   let currentPage = 1;
   let pageSize = 10;
   let currentSearchQuery = ""; // Store the current search term
+  const canCreateGroups = {{ can_create_groups|tojson }}; // Pass permission from backend
 
   // DOM Elements (jQuery)
   const tableBody = $("#my-groups-table tbody");
@@ -201,7 +206,7 @@
   const searchInput = $("#searchQueryInput");
   const searchBtn = $("#searchGroupsBtn");
   const clearSearchBtn = $("#clearSearchBtn");
-  const createGroupModal = new bootstrap.Modal(document.getElementById('createGroupModal'));
+  const createGroupModal = canCreateGroups ? new bootstrap.Modal(document.getElementById('createGroupModal')) : null;
   const findGroupModal = new bootstrap.Modal(document.getElementById('findGroupModal')); // Keep reference if needed
 
   // --- DATA FETCHING & RENDERING ---
@@ -373,7 +378,7 @@
       .fail(function (jqXHR, textStatus, errorThrown) {
         console.error("Error loading global groups:", errorThrown);
         const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-        resultsBody.html(`<tr><td colspan="3" class="text-center text-danger">Error: ${escapeHtml(errorMsg)}</td></tr>`);
+        resultsBody.html(`<tr><td colspan="5" class="text-center text-danger">Error: ${escapeHtml(errorMsg)}</td></tr>`);
       });
   }
 
@@ -381,12 +386,21 @@
     const tbody = $("#globalGroupResultsTable tbody");
     tbody.empty();
     if (!groups || groups.length === 0) {
-      tbody.html(`<tr><td colspan="3" class="text-center text-muted">No groups found matching your search.</td></tr>`); return;
+      tbody.html(`<tr><td colspan="5" class="text-center text-muted">No groups found matching your search.</td></tr>`); return;
     }
     groups.forEach((g) => {
       const row = $("<tr></tr>");
       row.append($("<td></td>").text(g.name));
       row.append($("<td></td>").text(g.description));
+      
+      // Owner column
+      const ownerName = g.owner?.displayName || g.owner?.email || 'Unknown';
+      row.append($("<td></td>").text(ownerName));
+      
+      // Member count column
+      row.append($("<td></td>").text(g.member_count || 0));
+      
+      // Actions column
       const joinBtn = $("<button class='btn btn-sm btn-primary join-request-btn'></button>")
                       .attr('data-group-id', g.id)
                       .text('Request to Join');
@@ -453,8 +467,10 @@
       fetchMyGroups();
     });
 
-    // Create Group form submission
-    $("#createGroupForm").on("submit", handleCreateGroup);
+    // Create Group form submission (only if user has permission)
+    if (canCreateGroups) {
+      $("#createGroupForm").on("submit", handleCreateGroup);
+    }
 
     // --- Event Delegation for Table Buttons ---
     tableBody.on("click", ".set-active-btn", function() {
@@ -478,7 +494,7 @@
 
     $("#findGroupModal").on("show.bs.modal", function () {
       $("#globalGroupSearchInput").val("");
-      $("#globalGroupResultsTable tbody").html('<tr><td colspan="3" class="text-center text-muted">Enter search term and select Search. To view all groups, clear search input and select Search</td></tr>');
+      $("#globalGroupResultsTable tbody").html('<tr><td colspan="5" class="text-center text-muted">Enter search term and select Search. To view all groups, clear search input and select Search</td></tr>');
       // Optionally trigger an initial empty search: searchAllGroups("");
     });
 

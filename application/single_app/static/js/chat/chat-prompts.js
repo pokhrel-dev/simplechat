@@ -1,6 +1,7 @@
 // chat-prompts.js
 
 import { userInput} from "./chat-messages.js";
+import { updateSendButtonVisibility } from "./chat-messages.js";
 
 const promptSelectionContainer = document.getElementById("prompt-selection-container");
 export const promptSelect = document.getElementById("prompt-select"); // Keep export if needed elsewhere
@@ -19,7 +20,18 @@ export function loadUserPrompts() {
 
 export function loadGroupPrompts() {
   return fetch("/api/group_prompts")
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) {
+        // Handle 400 errors gracefully (e.g., no active group selected)
+        if (r.status === 400) {
+          console.log("No active group selected for group prompts");
+          groupPrompts = [];
+          return { prompts: [] }; // Return empty result to avoid further errors
+        }
+        throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      }
+      return r.json();
+    })
     .then(data => {
       if (data.prompts) {
         groupPrompts = data.prompts;
@@ -64,6 +76,8 @@ export function initializePromptInteractions() {
               populatePromptSelect();
               userInput.classList.add("with-prompt-active");
               userInput.focus();
+              // Update send button visibility when prompts are shown
+              updateSendButtonVisibility();
           } else {
               promptSelectionContainer.style.display = "none";
               if (promptSelect) {
@@ -71,6 +85,8 @@ export function initializePromptInteractions() {
               }
               userInput.classList.remove("with-prompt-active");
               userInput.focus();
+              // Update send button visibility when prompts are hidden
+              updateSendButtonVisibility();
           }
       });
   } else {

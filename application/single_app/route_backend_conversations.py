@@ -3,6 +3,9 @@
 from config import *
 from functions_authentication import *
 from functions_settings import *
+from functions_conversation_metadata import get_conversation_metadata
+from flask import Response, request
+from functions_debug import debug_print
 
 def register_route_backend_conversations(app):
 
@@ -21,17 +24,217 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
-            # Then query the messages in cosmos_messages_container
+            # Query all messages and chunks in cosmos_messages_container
             message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}' ORDER BY c.timestamp ASC"
-            messages = list(cosmos_messages_container.query_items(
+            all_items = list(cosmos_messages_container.query_items(
                 query=message_query,
                 partition_key=conversation_id
             ))
+            
+            debug_print(f"Query returned {len(all_items)} total items")
+            for i, item in enumerate(all_items):
+                debug_print(f"Item {i}: id={item.get('id')}, role={item.get('role')}")
+            
+            # Process messages and reassemble chunked images
+            messages = []
+            chunked_images = {}  # Store image chunks by parent_message_id
+            
+            for item in all_items:
+                if item.get('role') == 'image_chunk':
+                    # This is a chunk, store it for reassembly
+                    parent_id = item.get('parent_message_id')
+                    if parent_id not in chunked_images:
+                        chunked_images[parent_id] = {}
+                    chunk_index = item.get('metadata', {}).get('chunk_index', 0)
+                    chunked_images[parent_id][chunk_index] = item.get('content', '')
+                else:
+                    # Regular message or main image document
+                    if item.get('role') == 'image' and item.get('metadata', {}).get('is_chunked'):
+                        # This is a chunked image main document
+                        image_id = item.get('id')
+                        total_chunks = item.get('metadata', {}).get('total_chunks', 1)
+                        
+                        # We'll reassemble after collecting all chunks
+                        messages.append(item)
+                    else:
+                        # Regular message
+                        messages.append(item)
+            
+            # Reassemble chunked images
+            for message in messages:
+                if (message.get('role') == 'image' and 
+                    message.get('metadata', {}).get('is_chunked')):
+                    
+                    image_id = message.get('id')
+                    total_chunks = message.get('metadata', {}).get('total_chunks', 1)
+                    
+                    debug_print(f"Reassembling chunked image {image_id} with {total_chunks} chunks")
+                    debug_print(f"Available chunks in chunked_images: {list(chunked_images.get(image_id, {}).keys())}")
+                    
+                    # Start with the content from the main message (chunk 0)
+                    complete_content = message.get('content', '')
+                    debug_print(f"Main message content length: {len(complete_content)} bytes")
+                    
+                    # Add remaining chunks in order (chunks 1, 2, 3, etc.)
+                    if image_id in chunked_images:
+                        chunks = chunked_images[image_id]
+                        for chunk_index in range(1, total_chunks):
+                            if chunk_index in chunks:
+                                chunk_content = chunks[chunk_index]
+                                complete_content += chunk_content
+                                debug_print(f"Added chunk {chunk_index}, length: {len(chunk_content)} bytes")
+                            else:
+                                print(f"WARNING: Missing chunk {chunk_index} for image {image_id}")
+                    else:
+                        print(f"WARNING: No chunks found for image {image_id} in chunked_images")
+                    
+                    debug_print(f"Final reassembled image total size: {len(complete_content)} bytes")
+                    
+                    # For large images (>1MB), use a URL reference instead of embedding in JSON
+                    if len(complete_content) > 1024 * 1024:  # 1MB threshold
+                        debug_print(f"Large image detected ({len(complete_content)} bytes), using URL reference")
+                        # Store the complete content temporarily and provide a URL reference
+                        message['content'] = f"/api/image/{image_id}"
+                        message['metadata']['is_large_image'] = True
+                        message['metadata']['image_size'] = len(complete_content)
+                        # Store the complete content in a way that can be retrieved by the image endpoint
+                        # For now, we'll modify the message in place but this could be optimized
+                        message['_complete_image_data'] = complete_content
+                    else:
+                        # Small enough to embed directly
+                        message['content'] = complete_content
+            
             return jsonify({'messages': messages})
         except CosmosResourceNotFoundError:
             return jsonify({'messages': []})
-        except Exception:
+        except Exception as e:
+            print(f"ERROR: Failed to get messages: {str(e)}")
             return jsonify({'error': 'Conversation not found'}), 404
+
+    @app.route('/api/image/<image_id>', methods=['GET'])
+    @login_required
+    @user_required
+    def api_get_image(image_id):
+        """Serve large images that were stored in chunks"""
+        print(f"🔥 IMAGE ENDPOINT CALLED: {image_id}")
+        print(f"🔥 Request URL: {request.url}")
+        print(f"🔥 Request headers: {dict(request.headers)}")
+        
+        user_id = get_current_user_id()
+        if not user_id:
+            print(f"🔥 Authentication failed for image request")
+            return jsonify({'error': 'User not authenticated'}), 401
+            
+        try:
+            # Extract conversation_id from image_id (format: conversation_id_image_timestamp_random)
+            parts = image_id.split('_')
+            if len(parts) < 4:
+                return jsonify({'error': 'Invalid image ID format'}), 400
+            
+            # Reconstruct conversation_id (everything except the last 3 parts)
+            conversation_id = '_'.join(parts[:-3])
+            
+            debug_print(f"Serving image {image_id} from conversation {conversation_id}")
+            
+            # Query for the main image document and chunks
+            message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
+            all_items = list(cosmos_messages_container.query_items(
+                query=message_query,
+                partition_key=conversation_id
+            ))
+            
+            # Find the specific image and its chunks
+            main_image = None
+            chunks = {}
+            
+            debug_print(f"Searching through {len(all_items)} items for image {image_id}")
+            
+            for item in all_items:
+                item_id = item.get('id')
+                item_role = item.get('role')
+                debug_print(f"Checking item {item_id}, role: {item_role}")
+                
+                if item_id == image_id and item_role == 'image':
+                    main_image = item
+                    debug_print(f"✅ Found main image document: {item_id}")
+                    debug_print(f"Main image content length: {len(item.get('content', ''))} bytes")
+                    debug_print(f"Main image metadata: {item.get('metadata', {})}")
+                elif (item_role == 'image_chunk' and 
+                      item.get('parent_message_id') == image_id):
+                    chunk_index = item.get('metadata', {}).get('chunk_index', 0)
+                    chunk_content = item.get('content', '')
+                    chunks[chunk_index] = chunk_content
+                    debug_print(f"✅ Found chunk {chunk_index}: {len(chunk_content)} bytes")
+                    debug_print(f"Chunk {chunk_index} starts with: {chunk_content[:50]}...")
+                    debug_print(f"Chunk {chunk_index} ends with: ...{chunk_content[-20:]}")
+            
+            debug_print(f"Found main_image: {main_image is not None}")
+            debug_print(f"Found chunks: {list(chunks.keys())}")
+            
+            if not main_image:
+                print(f"ERROR: Main image not found for {image_id}")
+                return jsonify({'error': 'Image not found'}), 404
+            
+            # Reassemble the image
+            complete_content = main_image.get('content', '')
+            total_chunks = main_image.get('metadata', {}).get('total_chunks', 1)
+            
+            debug_print(f"Starting reassembly...")
+            debug_print(f"Main content length: {len(complete_content)} bytes")
+            debug_print(f"Expected total chunks: {total_chunks}")
+            debug_print(f"Available chunk indices: {list(chunks.keys())}")
+            debug_print(f"Main content starts with: {complete_content[:50]}...")
+            debug_print(f"Main content ends with: ...{complete_content[-20:]}")
+            
+            reassembly_log = []
+            original_length = len(complete_content)
+            
+            for chunk_index in range(1, total_chunks):
+                if chunk_index in chunks:
+                    chunk_content = chunks[chunk_index]
+                    complete_content += chunk_content
+                    reassembly_log.append(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
+                    debug_print(f"Added chunk {chunk_index}: {len(chunk_content)} bytes")
+                    debug_print(f"Total length now: {len(complete_content)} bytes")
+                else:
+                    error_msg = f"Missing chunk {chunk_index}"
+                    reassembly_log.append(f"❌ {error_msg}")
+                    print(f"WARNING: {error_msg}")
+            
+            final_length = len(complete_content)
+            debug_print(f"Reassembly complete!")
+            debug_print(f"Original length: {original_length} bytes")
+            debug_print(f"Final length: {final_length} bytes")
+            debug_print(f"Added: {final_length - original_length} bytes")
+            debug_print(f"Reassembly log: {reassembly_log}")
+            debug_print(f"Final content starts with: {complete_content[:50]}...")
+            debug_print(f"Final content ends with: ...{complete_content[-20:]}")
+            
+            # Return the image data with appropriate headers
+            if complete_content.startswith('data:image/'):
+                # Extract mime type and base64 data
+                header, base64_data = complete_content.split(',', 1)
+                mime_type = header.split(':')[1].split(';')[0]
+                
+                import base64
+                image_data = base64.b64decode(base64_data)
+                
+                return Response(
+                    image_data,
+                    mimetype=mime_type,
+                    headers={
+                        'Content-Length': len(image_data),
+                        'Cache-Control': 'public, max-age=3600'  # Cache for 1 hour
+                    }
+                )
+            else:
+                return jsonify({'error': 'Invalid image format'}), 400
+                
+        except Exception as e:
+            print(f"ERROR: Failed to serve image {image_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to retrieve image'}), 500
         
     @app.route('/api/get_conversations', methods=['GET'])
     @login_required
@@ -60,7 +263,10 @@ def register_route_backend_conversations(app):
             'id': conversation_id,
             'user_id': user_id,
             'last_updated': datetime.utcnow().isoformat(),
-            'title': 'New Conversation'
+            'title': 'New Conversation',
+            'context': [],
+            'tags': [],
+            'strict': False
         }
         cosmos_conversations_container.upsert_item(conversation_item)
 
@@ -161,6 +367,7 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            # TODO: Delete any facts that were stored with this conversation.
         except Exception as e:
             return jsonify({
                 "error": str(e)
@@ -249,3 +456,43 @@ def register_route_backend_conversations(app):
             "deleted_count": success_count,
             "failed_ids": failed_ids
         }), 200
+
+    @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
+    @login_required
+    @user_required
+    def get_conversation_metadata_api(conversation_id):
+        """
+        Get detailed metadata for a conversation including context, tags, and other information.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        try:
+            # Retrieve the conversation
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id
+            )
+            
+            # Ensure that the conversation belongs to the current user
+            if conversation_item.get('user_id') != user_id:
+                return jsonify({'error': 'Forbidden'}), 403
+            
+            # Return the full conversation metadata
+            return jsonify({
+                "conversation_id": conversation_id,
+                "title": conversation_item.get('title', ''),
+                "user_id": conversation_item.get('user_id', ''),
+                "last_updated": conversation_item.get('last_updated', ''),
+                "classification": conversation_item.get('classification', []),
+                "context": conversation_item.get('context', []),
+                "tags": conversation_item.get('tags', []),
+                "strict": conversation_item.get('strict', False)
+            }), 200
+            
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            print(f"Error retrieving conversation metadata: {e}")
+            return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500

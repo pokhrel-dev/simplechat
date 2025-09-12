@@ -61,7 +61,6 @@
     "enable_user_feedback": true,
     "enable_conversation_archiving": true,
     "enable_web_search": true,
-    "bing_search_key": "<your-bing-search-key>",
     "azure_ai_search_endpoint": "<your-ai-search-endpoint>",
     "azure_ai_search_key": "<your-ai-search-key>",
     "azure_ai_search_authentication_type": "key",
@@ -108,6 +107,8 @@
     "enable_public_workspaces": false,
     "require_member_of_create_public_workspace": false,
     "custom_logo_base64": "<base64-encoded-logo>",
-    "logo_version": 9
+    "logo_version": 9,
+    "custom_logo_dark_base64": "<base64-encoded-dark-logo>",
+    "logo_dark_version": 1
   }
   

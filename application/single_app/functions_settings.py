@@ -1,9 +1,40 @@
 # functions_settings.py
 
 from config import *
+from functions_appinsights import log_event
 
 def get_settings():
+    import secrets
     default_settings = {
+        # Health check
+        'enable_health_check': True,
+        # Security settings
+        'enable_appinsights_global_logging': False,
+        'enable_debug_logging': False,
+        # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
+        'enable_time_plugin': True,
+        'enable_http_plugin': True,
+        'enable_wait_plugin': True,
+        'enable_math_plugin': True,
+        'enable_text_plugin': True,
+        'enable_default_embedding_model_plugin': False,
+        'enable_fact_memory_plugin': True,
+        'enable_multi_agent_orchestration': False,
+        'max_rounds_per_agent': 1,
+        'enable_semantic_kernel': False,
+        'per_user_semantic_kernel': False,
+        'orchestration_type': 'default_agent',
+        'merge_global_semantic_kernel_with_workspace': False,
+        'global_selected_agent': {
+            'name': 'researcher',
+            'is_global': True
+        },
+        'allow_user_agents': False,
+        'allow_user_custom_agent_endpoints': False,
+        'allow_user_plugins': False,
+        'allow_group_agents': False,
+        'allow_group_custom_agent_endpoints': False,
+        'allow_group_plugins': False,
         'id': 'app_settings',
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -14,9 +45,12 @@ def get_settings():
         'hide_app_title': False,
         'custom_logo_base64': '',
         'logo_version': 1,
+        'custom_logo_dark_base64': '',
+        'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
         'enable_dark_mode_default': False,
+        'enable_left_nav_default': True,
 
         # GPT Settings
         'enable_gpt_apim': False,
@@ -56,7 +90,7 @@ def get_settings():
         'enable_image_generation': False,
         'enable_image_gen_apim': False,
         'azure_openai_image_gen_endpoint': '',
-        'azure_openai_image_gen_api_version': '2024-05-01-preview',
+        'azure_openai_image_gen_api_version': '2024-12-01-preview',
         'azure_openai_image_gen_authentication_type': 'key',
         'azure_openai_image_gen_subscription_id': '',
         'azure_openai_image_gen_resource_group': '',
@@ -83,6 +117,7 @@ def get_settings():
         'require_member_of_create_group': False,
         'enable_public_workspaces': False,
         'require_member_of_create_public_workspace': False,
+        'enable_file_sharing': False,
 
         # Multimedia
         'enable_video_file_support': False,
@@ -103,11 +138,21 @@ def get_settings():
             {"label": "Pending", "color": "#0000FF"}
         ],
 
+        # External Links
+        'enable_external_links': False,
+        'external_links_menu_name': 'External Links',
+        'external_links_force_menu': False,
+        'external_links': [
+            {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
+            {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
+        ],
+
         # Enhanced Citations
         'enable_enhanced_citations': False,
         'enable_enhanced_citations_mount': False,
         'enhanced_citations_mount': '/view_documents',
         'office_docs_storage_account_url': '',
+        'office_docs_storage_account_blob_endpoint': '',
         'office_docs_authentication_type': 'key',
         'office_docs_key': '',
         'video_files_storage_account_url': '',
@@ -133,12 +178,6 @@ def get_settings():
         'enable_conversation_archiving': False,
 
         # Search and Extract
-        'enable_web_search': False,
-        'bing_search_key': '',
-        'enable_web_search_apim': False,
-        'azure_apim_web_search_endpoint': '',
-        'azure_apim_web_search_subscription_key': '',
-
         'azure_ai_search_endpoint': '',
         'azure_ai_search_key': '',
         'azure_ai_search_authentication_type': 'key',
@@ -153,6 +192,10 @@ def get_settings():
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
 
+        # Authentication & Redirect Settings
+        'enable_front_door': False,
+        'front_door_url': '',
+
         # Other
         'max_file_size_mb': 150,
         'conversation_history_limit': 10,
@@ -161,7 +204,7 @@ def get_settings():
         'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings
-        'video_indexer_endpoint': 'https://api.videoindexer.ai',
+        'video_indexer_endpoint': video_indexer_endpoint,
         'video_indexer_location': '',
         'video_indexer_account_id': '',
         'video_indexer_api_key': '',
@@ -172,8 +215,8 @@ def get_settings():
         'video_index_timeout': 600,
 
         # Audio file settings with Azure speech service
-        "speech_service_endpoint": "https://eastus.api.cognitive.microsoft.com",
-        "speech_service_location": "eastus",
+        "speech_service_endpoint": '',
+        "speech_service_location": '',
         "speech_service_locale": "en-US",
         "speech_service_key": ""
     }
@@ -199,7 +242,6 @@ def get_settings():
             return merged
 
     except CosmosResourceNotFoundError:
-        # If there's no doc, create it from scratch:
         cosmos_settings_container.create_item(body=default_settings)
         print("Default settings created in Cosmos and returned.")
         return default_settings
@@ -207,7 +249,6 @@ def get_settings():
     except Exception as e:
         print(f"Error retrieving settings: {str(e)}")
         return None
-
 
 def update_settings(new_settings):
     try:
@@ -367,16 +408,63 @@ def decrypt_key(encrypted_key):
         return None
 
 def get_user_settings(user_id):
-    """Fetches the user settings document from Cosmos DB."""
+    """Fetches the user settings document from Cosmos DB, ensuring email and display_name are present if possible."""
+    from flask import session
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         # Ensure the settings key exists for consistency downstream
         if 'settings' not in doc:
             doc['settings'] = {}
+        
+        # Try to update email/display_name if missing and available in session
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        updated = False
+        if email and doc.get("email") != email:
+            doc["email"] = email
+            updated = True
+        if display_name and doc.get("display_name") != display_name:
+            doc["display_name"] = display_name
+            updated = True
+            
+        # Check if profile image needs to be fetched
+        if 'profileImage' not in doc['settings']:
+            from functions_authentication import get_user_profile_image
+            try:
+                profile_image = get_user_profile_image()
+                doc['settings']['profileImage'] = profile_image
+                updated = True
+            except Exception as e:
+                print(f"Warning: Could not fetch profile image for user {user_id}: {e}")
+                doc['settings']['profileImage'] = None
+                updated = True
+        
+        if updated:
+            cosmos_user_settings_container.upsert_item(body=doc)
         return doc
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
-        return {"id": user_id, "settings": {}}
+        user = session.get("user", {})
+        email = user.get("preferred_username") or user.get("email")
+        display_name = user.get("name")
+        doc = {"id": user_id, "settings": {}}
+        if email:
+            doc["email"] = email
+        if display_name:
+            doc["display_name"] = display_name
+            
+        # Try to fetch profile image for new user
+        from functions_authentication import get_user_profile_image
+        try:
+            profile_image = get_user_profile_image()
+            doc['settings']['profileImage'] = profile_image
+        except Exception as e:
+            print(f"Warning: Could not fetch profile image for new user {user_id}: {e}")
+            doc['settings']['profileImage'] = None
+            
+        cosmos_user_settings_container.upsert_item(body=doc)
+        return doc
     except Exception as e:
         print(f"Error in get_user_settings for {user_id}: {e}")
         raise # Re-raise the exception to be handled by the route
@@ -395,6 +483,7 @@ def update_user_settings(user_id, settings_to_update):
         bool: True if the update was successful, False otherwise.
     """
     log_prefix = f"User settings update for {user_id}:"
+    log_event("[UserSettings] Update Attempt", {"user_id": user_id, "settings_to_update": settings_to_update})
 
 
     try:
@@ -416,18 +505,87 @@ def update_user_settings(user_id, settings_to_update):
                 # Add any other default top-level fields if needed
             }
 
+
         # --- Merge the new settings into the 'settings' sub-dictionary ---
         doc['settings'].update(settings_to_update)
+
+        # Ensure 'agents' and 'plugins' keys exist in settings
+        if 'agents' not in doc['settings'] or doc['settings']['agents'] is None:
+            doc['settings']['agents'] = [
+                {
+                    "id": f"{user_id}_researcher",
+                    "name": "researcher",
+                    "display_name": "researcher",
+                    "description": "This agent is detailed to provide researcher capabilities and uses a reasoning and research focused model.",
+                    "azure_openai_gpt_endpoint": "",
+                    "azure_openai_gpt_key": "",
+                    "azure_openai_gpt_deployment": "",
+                    "azure_openai_gpt_api_version": "",
+                    "azure_agent_apim_gpt_endpoint": "",
+                    "azure_agent_apim_gpt_subscription_key": "",
+                    "azure_agent_apim_gpt_deployment": "",
+                    "azure_agent_apim_gpt_api_version": "",
+                    "enable_agent_gpt_apim": False,
+                    "default_agent": True,
+                    "is_global": False,
+                    "instructions": "You are a highly capable research assistant. Your role is to help the user investigate academic, technical, and real-world topics by finding relevant information, summarizing key points, identifying knowledge gaps, and suggesting credible sources for further study.\n\nYou must always:\n- Think step-by-step and work methodically.\n- Distinguish between fact, inference, and opinion.\n- Clearly state your assumptions when making inferences.\n- Cite authoritative sources when possible (e.g., peer-reviewed journals, academic publishers, government agencies).\n- Avoid speculation unless explicitly asked for.\n- When asked to summarize, preserve the intent, nuance, and technical accuracy of the original content.\n- When generating questions, aim for depth and clarity to guide rigorous inquiry.\n- Present answers in a clear, structured format using bullet points, tables, or headings when appropriate.\n\nUse a professional, neutral tone. Do not anthropomorphize yourself or refer to yourself as an AI unless the user specifically asks you to reflect on your capabilities. Remain focused on delivering objective, actionable research insights.\n\nIf you encounter ambiguity or uncertainty, ask clarifying questions rather than assuming.",
+                    "actions_to_load": [],
+                    "other_settings": {},
+                }
+            ]
+        if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
+            doc['settings']['plugins'] = []
+        if 'selected_agent' not in doc['settings'] or doc['settings']['selected_agent'] is None:
+            first_user_agent = doc['settings']['agents'][0]
+            if first_user_agent:
+                doc['settings']['selected_agent'] = {
+                    'name': first_user_agent['name'],
+                    'is_global': False,
+                }
+            else:
+                settings = get_settings()
+                if settings.get('merge_global_semantic_kernel_with_workspace', False):
+                    # Use new container-based storage for global agents
+                    from functions_global_agents import get_all_global_agents
+                    try:
+                        global_agents = get_all_global_agents()
+                        if global_agents:
+                            first_global_agent = global_agents[0]
+                            doc['settings']['selected_agent'] = {
+                                'name': first_global_agent['name'],
+                                'is_global': True,
+                            }
+                        else:
+                            doc['settings']['selected_agent'] = {
+                                'name': 'default_agent',
+                                'is_global': True,
+                            }
+                    except Exception:
+                        # Fallback if container access fails
+                        doc['settings']['selected_agent'] = {
+                            'name': 'default_agent',
+                            'is_global': True,
+                        }
+                else:
+                    doc['settings']['selected_agent'] = {
+                        'name': 'researcher',
+                        'is_global': False,
+                    }
+
+        if doc['settings']['agents'] is not None and len(doc['settings']['agents']) > 0:
+            for agent in doc['settings']['agents']:
+                if 'default_agent' in agent:
+                    del agent['default_agent']
+
+        if 'enable_agents' not in doc['settings'] or doc['settings']['enable_agents'] is None:
+            doc['settings']['enable_agents'] = False
 
         # --- Update the timestamp ---
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-
-
         # Upsert the modified document
         cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
-
 
         return True
 
@@ -453,28 +611,6 @@ def enabled_required(setting_key):
         return wrapper
     return decorator
 
-
 def sanitize_settings_for_user(full_settings: dict) -> dict:
-    keys_to_exclude = {
-        'azure_document_intelligence_key',
-        'azure_ai_search_key',
-        'azure_openai_gpt_key',
-        'azure_openai_embedding_key',
-        'azure_openai_image_gen_key',
-        'bing_search_key',
-        'azure_apim_gpt_subscription_key',
-        'azure_apim_embedding_subscription_key',
-        'azure_apim_image_gen_subscription_key',
-        'azure_apim_web_search_subscription_key',
-        'azure_apim_ai_search_subscription_key',
-        'azure_apim_document_intelligence_subscription_key',
-        'redis_key',
-        'azure_apim_redis_subscription_key',
-        'azure_apim_content_safety_subscription_key',
-        'content_safety_key',
-        'office_docs_key',
-        'video_files_key',
-        'audio_files_key'
-        # any others that are secrets
-    }
-    return {k:v for k,v in full_settings.items() if k not in keys_to_exclude}
+    # Exclude any key containing the substring "key" or specific sensitive URLs
+    return {k: v for k, v in full_settings.items() if "key" not in k and k != "office_docs_storage_account_url"}
