@@ -229,6 +229,15 @@ def get_settings():
         "speech_service_key": ""
     }
 
+    # If running in mock mode or Cosmos container isn't available, return defaults immediately.
+    try:
+        if MOCK_MODE or (globals().get("cosmos_settings_container") is None):
+            print("MOCK_MODE or missing cosmos_settings_container: returning default settings.")
+            return default_settings
+    except Exception:
+        # Defensive fallback: if config names are missing for any reason, return defaults
+        return default_settings
+    
     try:
         # Attempt to read the existing doc
         settings_item = cosmos_settings_container.read_item(

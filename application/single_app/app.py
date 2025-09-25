@@ -8,6 +8,7 @@ from semantic_kernel import Kernel
 from semantic_kernel_loader import initialize_semantic_kernel
 
 from azure.monitor.opentelemetry import configure_azure_monitor
+from config import MOCK_MODE
 
 from config import *
 
@@ -91,7 +92,11 @@ from functions_global_agents import ensure_default_global_agent_exists
 
 from route_external_health import *
 
-configure_azure_monitor()
+# Only configure Azure Monitor when not running in mock mode (avoids requiring instrumentation key)
+if not MOCK_MODE:
+    configure_azure_monitor()
+else:
+    print("MOCK_MODE enabled; skipping configure_azure_monitor()")
 
 
 # =================== Helper Functions ===================
