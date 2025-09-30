@@ -128,6 +128,8 @@
     "speech_service_endpoint": "https://eastus.api.cognitive.microsoft.com",
     "speech_service_location": "eastus",
     "speech_service_locale": "en-US",
+    "_comment": "Pradeep Changes for speech start",
+    "speech_service_authentication_type": "key",
     "speech_service_key": "",
     "classification_banner_enabled": true,
     "classification_banner_text": "Classification",

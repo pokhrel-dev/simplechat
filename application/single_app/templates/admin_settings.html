@@ -947,7 +947,7 @@
                     </div>
                     <div class="mb-2">
                         <span id="classification-banner-preview"
-                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:#fff; background:{{ settings.classification_banner_color if settings.classification_banner_color else '#ffc107' }};">
                             {{ settings.classification_banner_text or 'Banner Preview' }}
                         </span>
                     </div>
@@ -1795,6 +1795,21 @@
                         </div>
 
                         <div class="mb-3">
+                            <!-- Pradeep: This is the Place need to toggle the drop down menu for managed Identity / apikey change 3 start  -->
+                            <label for="speech_service_authentication_type" class="form-label">Authentication Type
+                            </label>
+                            <select class="form-select" id="speech_service_authentication_type"
+                                    name="speech_service_authentication_type">
+                                <option value="key" {% if settings.speech_service_authentication_type=='key'
+                                    %}selected{% endif %}>
+                                    Key
+                                </option>
+                                <option value="managed_identity" {% if
+                                    settings.speech_service_authentication_type=='managed_identity'
+                                    %}selected{% endif %}>
+                                    Managed Identity
+                                </option>
+                            <!--Pradeep Changed End-->
                             <label for="speech_service_key" class="form-label">API Key</label>
                             <div class="input-group">
                             <input type="password" class="form-control"

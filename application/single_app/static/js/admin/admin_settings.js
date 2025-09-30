@@ -2936,6 +2936,8 @@ function setupWalkthroughFieldListeners() {
             {selector: '#enable_audio_file_support', event: 'change'},
             {selector: '#speech_service_endpoint', event: 'input'},
             {selector: '#speech_service_key', event: 'input'}
+            //pradeep change
+             {selector: 'speech_service_authentication_type"', event: 'change', delay: 500},
         ]
     };
     
