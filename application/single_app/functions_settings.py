@@ -6,11 +6,15 @@ from functions_appinsights import log_event
 def get_settings():
     import secrets
     default_settings = {
-        # Health check
-        'enable_health_check': True,
+        # External health check
+        'enable_external_healthcheck': True,
         # Security settings
         'enable_appinsights_global_logging': False,
         'enable_debug_logging': False,
+        'debug_logging_timer_enabled': False,
+        'debug_timer_value': 1,
+        'debug_timer_unit': 'hours',
+        'debug_logging_turnoff_time': None,
         # Semantic Kernel plugin/action manifests (MCP, Databricks, RAG, etc.)
         'enable_time_plugin': True,
         'enable_http_plugin': True,
@@ -201,6 +205,10 @@ def get_settings():
         'conversation_history_limit': 10,
         'default_system_prompt': '',
         'enable_file_processing_logs': True,
+        'file_processing_logs_timer_enabled': False,
+        'file_timer_value': 1,
+        'file_timer_unit': 'hours',
+        'file_processing_logs_turnoff_time': None,
         'enable_external_healthcheck': False,
 
         # Video file settings with Azure Video Indexer Settings
@@ -221,6 +229,15 @@ def get_settings():
         "speech_service_key": ""
     }
 
+    # If running in mock mode or Cosmos container isn't available, return defaults immediately.
+    try:
+        if MOCK_MODE or (globals().get("cosmos_settings_container") is None):
+            print("MOCK_MODE or missing cosmos_settings_container: returning default settings.")
+            return default_settings
+    except Exception:
+        # Defensive fallback: if config names are missing for any reason, return defaults
+        return default_settings
+    
     try:
         # Attempt to read the existing doc
         settings_item = cosmos_settings_container.read_item(
