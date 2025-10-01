@@ -88,12 +88,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-<<<<<<< HEAD
-VERSION = "0.229.016"
-=======
 VERSION = "0.229.062"
-
->>>>>>> e3eec1e81ff12180cef9980243211fd377e4f867
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Security Headers Configuration
